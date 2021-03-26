@@ -2,7 +2,7 @@
 
 This guide roughly follows the [Zero to BinderHub](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/) documentation. I found that guide vague in some places (for someone unfamiliar with BinderHub such as myself). Notably, the BinderHub team primarily use Google Cloud and there is less support/documentation for AWS (which is what I primarily use) so I decided to write down my workflow here for reproducibility and in case anybody stumbles across this repo looking for help.
 
-Recall that [Binderhub](https://github.com/jupyterhub/binderhub) combines JupyterHub (spawning single user Jupyter Notebook servers) and Repo2Docker (for building Docker images from Git repositories) to provide on-demand Jupyter notebooks that do not require authentication.
+[Binderhub](https://github.com/jupyterhub/binderhub) combines JupyterHub (service to spawn single user Jupyter Notebook servers) and Repo2Docker (for building Docker images from Git repositories) to provide on-demand Jupyter notebooks that do not require authentication.
 
 This documentation focuses on using Amazon Elastic Kubernetes Service (EKS) to create and manage the cluster and DockerHub as the container registry.
 
@@ -17,13 +17,11 @@ Follow the steps below.
 
 ## 1. Create an EC2 Instance <a name="1"></a>
 
->For those in the University of British Columbia Master of Data Science program, I've created an AMI called "binderhub" which you can create an instance from and jump to Step 2.
-
-I used a t2.micro AWS EC2 instance to help set-up and manage my BinderHub but you could do this locally too. Follow the steps below to create an instace:
+I used a t2.micro AWS EC2 instance to help set-up and manage my BinderHub (but you could do this locally too if you wanted). Follow the steps below to create an instace:
 
 - Log in to the [AWS console](https://aws.amazon.com/) and go to the EC2 service.
 - Make sure you're in your desired region (Canada: `ca-central-1` for me) and click "Instances" in the dashboard.
-- Click "Launch Instance" and select the "Ubuntu Server 18.04 LTS (HVM), SSD Volume Type" AMI.
+- Click "Launch Instance" and select a suitable AMI (I choose the "Ubuntu Server 18.04 LTS (HVM), SSD Volume Type").
 - In Step 2 (choose an instance type), Step 3 (configure instance) and Step 4 (add storage) leave the defaults.
 - Add tags in Step 5 if you wish.
 - In Step 6 choose "Create a new security group" and add the following rules:
@@ -34,8 +32,7 @@ I used a t2.micro AWS EC2 instance to help set-up and manage my BinderHub but yo
 
 ## 2. Create a Cluster with EKS <a name="2"></a>
 
-- From within your EC2 instance, you can now follow all the steps in the [AWS EKS docs](https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html)
-- Complete the steps [Prerequisites](https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html#eksctl-prereqs) and [Install and configure kubectl](https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html#eksctl-kubectl) as outlined, choosing the `Linux` tab where necessary (for those in the University of British Columbia Master of Data Science program, I've created an AMI including all the steps up to and including this dot-point called "binderhub")
+- From within your EC2 instance, you should now go to the [AWS EKS docs](https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html) and install `awscli`, `kubectl` and `eksctl` following the documentation. You'll also need to configure the AWS CLI following [these instructions](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html).
 - When you get to the section [Create your Amazon EKS cluster and compute](https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html#eksctl-create-cluster), we need to do the following steps. These are required because EKS is no longer natively supporting docker, read more [here](https://github.com/weaveworks/eksctl/issues/942#issuecomment-515867547) and the solution comes from [here](https://gist.github.com/tobemedia/2144d74d232ccce8972613e8ae13b054).
   - run `ssh-keygen` and accept defaults to generate a key pair.
   - Create a file `nano aws_eks_config.yaml`
@@ -53,10 +50,10 @@ kind: ClusterConfig
 metadata:
   name: binderhub
   region: ca-central-1
-  version: '1.17'
+  version: '1.19'
 
 nodeGroups:
-  - name: binderhub-nodes
+  - name: nodes
     instanceType: t3.medium
     minSize: 1
     maxSize: 4
@@ -76,11 +73,10 @@ nodeGroups:
 ## 3. Set Up BinderHub <a name="3"></a>
 
 - From here, just follow all the steps in the Zero-to-Binderhub guide starting from [1.2. Installing Helm](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-prerequisites.html#installing-helm), and using DockerHub as the container registry.
-- **WARNING**: when you get to [3.5. Connect BinderHub and JupyterHub](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-binderhub.html#connect-binderhub-and-jupyterhub), you'll run the command `kubectl --namespace=<namespace-from-above> get svc proxy-public` to retrieve the JupyterHub "EXTERNAL-IP" address, but if you paste this url into a browser it won't work. It should display a simple JupyterHub "403 : Forbidden" page, but it doesn't, so we need to patch the LoadBalancer's port forwarding:
-![error](img/error.png)
-- Go to EC2 in the AWS web console -> Click Load Balancers in the side menu -> Find the load balancer, click on it and check the "Instances" tab -> you'll notice that the status of the Instance ID's is "OutOfService" -> now go to the "Description" tab -> Scroll down to the "Port Configuration" header and note that 80 TCP port, something like "*80 (TCP) forwarding to 32413 (TCP)*" -> Click “Health Check” tab -> Click "Edit Health Check" -> Change the "Ping Port" to the port that 80 (TCP) is being forwarded to, e.g., 32413.
-- After you do this, refresh the JupyterHub url and you'll see this:
+- **WARNING**: when you get to [3.5. Connect BinderHub and JupyterHub](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-binderhub.html#connect-binderhub-and-jupyterhub), you'll run the command `kubectl --namespace=<namespace-from-above> get svc proxy-public` to retrieve the JupyterHub "EXTERNAL-IP" address. If you paste this url into a browser. It should display a simple JupyterHub "403 : Forbidden" page like below:
 ![jupyterhub](img/jupyterhub.png)
+- If it doesn't and shows something like the below, you'll need to patch the LoadBalancer's port forwarding. To do that, go to EC2 in the AWS web console -> Click Load Balancers in the side menu -> Find the load balancer, click on it and check the "Instances" tab -> you'll notice that the status of the Instance ID's is "OutOfService" -> now go to the "Description" tab -> Scroll down to the "Port Configuration" header and note that 80 TCP port, something like "*80 (TCP) forwarding to 32413 (TCP)*" -> Click “Health Check” tab -> Click "Edit Health Check" -> Change the "Ping Port" to the port that 80 (TCP) is being forwarded to, e.g., 32413.
+![error](img/error.png)
 - Continue on with final steps in the Z2BH guide and you'll have you're own Binderhub:
 ![binder_insecure](img/binder_insecure.png)
 - At the moment this binder is insecure, it works, but you may run into security issues down the line. In the next step we'll secure it for use with HTTPS traffic.

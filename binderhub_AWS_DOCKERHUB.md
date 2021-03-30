@@ -4,20 +4,20 @@ This guide roughly follows the [Zero to BinderHub](https://binderhub.readthedocs
 
 [Binderhub](https://github.com/jupyterhub/binderhub) combines JupyterHub (service to spawn single user Jupyter Notebook servers) and Repo2Docker (for building Docker images from Git repositories) to provide on-demand Jupyter notebooks that do not require authentication.
 
-This documentation focuses on using Amazon Elastic Kubernetes Service (EKS) to create and manage the cluster and DockerHub as the container registry.
+This documentation focuses on using Amazon Elastic Kubernetes Service (EKS) to create and manage the cluster and DockerHub as the container registry. I'd like to use AWS ECR as the container registry but that [PR remains in progress as of April 2021](https://github.com/jupyterhub/binderhub/pull/1055).
 
-Follow the steps below.
+To create a BinderHub, follow the steps below.
 
-1. [Create an EC2 Instance](#2)
+1. [Create an EC2 Instance](#1)
 2. [Create a Cluster with EKS](#2)
 3. [Set up BinderHub](#3)
-4. [Customize and Secure BinderHub](#4)
-5. [Tearing It All Down](#5)
-6. [Cheat Sheet](#6)
+4. [Secure BinderHub](#4)
+5. [](#5)
+6. [Tearing It All Down](#6)
 
 ## 1. Create an EC2 Instance <a name="1"></a>
 
-I used a t2.micro AWS EC2 instance to help set-up and manage my BinderHub (but you could do this locally too if you wanted). Follow the steps below to create an instace:
+I used a t2.micro AWS EC2 instance to help set-up and manage my BinderHub (you could do this locally too if you wanted, but I preferred to have a separate machine for this that others could easily manage too). Follow the steps below to set up an instace:
 
 - Log in to the [AWS console](https://aws.amazon.com/) and go to the EC2 service.
 - Make sure you're in your desired region (Canada: `ca-central-1` for me) and click "Instances" in the dashboard.
@@ -54,10 +54,10 @@ metadata:
 
 nodeGroups:
   - name: nodes
-    instanceType: t3.medium
+    instanceType: m5.2xlarge
     minSize: 1
     maxSize: 4
-    desiredCapacity: 2
+    desiredCapacity: 1
     preBootstrapCommands:
         # Replicate what --enable-docker-bridge does in /etc/eks/bootstrap.sh
         # Enabling the docker bridge network. We have to disable live-restore as it
@@ -70,23 +70,25 @@ nodeGroups:
   - Then run `eksctl create cluster --config-file aws_eks_config.yaml` to create the cluster
   - The cluster usually takes ~15 mins to build, check it has finished by running `kubectl get svc`
 
+>Note that it takes some trial-and-error to select the `instanceType`. You can easily scale the cluster up or down with `eksctl` but unfortunately it's difficult to change the `instanceType` after the cluster is created. For some context one m5.2xlarge was suitable for managing a class of ~30 students doing data science (mostly using `pandas` and `scikit-learn`). One node could handle up to 60 students but it was slow, adding two nodes significantly improved speed in this situation. [This guide](https://tljh.jupyter.org/en/latest/howto/admin/resource-estimation.html) in the Littlest JupyterHub documentation may also be helpful.
+
 ## 3. Set Up BinderHub <a name="3"></a>
 
 - From here, just follow all the steps in the Zero-to-Binderhub guide starting from [1.2. Installing Helm](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-prerequisites.html#installing-helm), and using DockerHub as the container registry.
 - **WARNING**: when you get to [3.5. Connect BinderHub and JupyterHub](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-binderhub.html#connect-binderhub-and-jupyterhub), you'll run the command `kubectl --namespace=<namespace-from-above> get svc proxy-public` to retrieve the JupyterHub "EXTERNAL-IP" address. If you paste this url into a browser. It should display a simple JupyterHub "403 : Forbidden" page like below:
 ![jupyterhub](img/jupyterhub.png)
-- If it doesn't and shows something like the below, you'll need to patch the LoadBalancer's port forwarding. To do that, go to EC2 in the AWS web console -> Click Load Balancers in the side menu -> Find the load balancer, click on it and check the "Instances" tab -> you'll notice that the status of the Instance ID's is "OutOfService" -> now go to the "Description" tab -> Scroll down to the "Port Configuration" header and note that 80 TCP port, something like "*80 (TCP) forwarding to 32413 (TCP)*" -> Click “Health Check” tab -> Click "Edit Health Check" -> Change the "Ping Port" to the port that 80 (TCP) is being forwarded to, e.g., 32413.
+- If it doesn't and shows something like the "This site can't be reached" error below, you'll need to patch the LoadBalancer's port forwarding. To do that, go to EC2 in the AWS web console -> Click Load Balancers in the side menu -> Find the load balancer, click on it and check the "Instances" tab -> you'll notice that the status of the Instance ID's is "OutOfService" -> now go to the "Description" tab -> Scroll down to the "Port Configuration" header and note that 80 TCP port, something like "*80 (TCP) forwarding to 32413 (TCP)*" -> Click “Health Check” tab -> Click "Edit Health Check" -> Change the "Ping Port" to the port that 80 (TCP) is being forwarded to, e.g., 32413.
 ![error](img/error.png)
 - Continue on with final steps in the Z2BH guide and you'll have you're own Binderhub:
 ![binder_insecure](img/binder_insecure.png)
 - At the moment this binder is insecure, it works, but you may run into security issues down the line. In the next step we'll secure it for use with HTTPS traffic.
 
-## 4. Customize and Secure BinderHub <a name="4"></a>
+## 4. Secure BinderHub <a name="4"></a>
 
-- We can secure our Binder by following steps at in [the BinderHub docs](https://binderhub.readthedocs.io/en/latest/https.html#secure-with-https). However, these are specific to Google Cloud and there are some tricks to get it to work on AWS. Read on.
-- The first thing you need to do is buy a domain name to serve your binder from, e.g., you might buyt the domain `example.com`, and you can then serve your binder at `binder.example.com`. Buy the domain now and we'll use it a little later on. I've tried this with namecheap and Google Domains.
-- Install cert-manager which will manage our TLS certificate `kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v0.11.0/cert-manager.yaml`
-- Create `nano binderhub-issuer.yaml`:
+- We can secure our Binder by following the steps in [the BinderHub docs](https://binderhub.readthedocs.io/en/latest/https.html#secure-with-https). However, these steps are currently (April 2021) specific to Google Cloud and there are some tricks to get it to work on AWS. Read on.
+- The first thing you need to do is buy a domain name to serve your binder from, e.g., you might buy the domain `example.com`, and you can then serve your binder at `binder.example.com`. Buy the domain now and we'll use it a little later on. I've tried this with namecheap and Google Domains.
+- Next, install `cert-manager` which will manage our TLS certificate. [Installation docs are here](https://cert-manager.io/docs/installation/kubernetes/).
+- Now, create a file `binderhub-issuer.yaml` with the following contents:
 ```yml
 apiVersion: cert-manager.io/v1alpha2
 kind: Issuer
@@ -108,12 +110,12 @@ spec:
         ingress:
           class: nginx
 ```
-- `kubectl apply -f binderhub-issuer.yaml`
-- Now we want to create an nginx-based LoadBalancer on AWS. I followed the [Kubernetes Ingress Nginx documentation](https://kubernetes.github.io/ingress-nginx/deploy/#aws) to do this which just required running: `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.35.0/deploy/static/provider/aws/deploy.yaml`
+- Run `kubectl apply -f binderhub-issuer.yaml` to apply this configuration
+- Now we want to create an nginx-based LoadBalancer on AWS. I followed the [Kubernetes Ingress Nginx documentation](https://kubernetes.github.io/ingress-nginx/deploy/#aws) to do this which just required running: `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v0.44.0/deploy/static/provider/aws/deploy.yaml`
 - Get the external IP of the newly created LoadBalancer: `kubectl -n ingress-nginx get svc ingress-nginx-controller`, think of this as the entry point to our cluster.
-- Now we need to create CNAMES in our domain's DNS configuration for binder and jupyterhub that point to this LoadBalancer's IP. How this is done will depend on the provider but you just need to add a new CNAME record, give it a name (anyname you want but I recommend, `binder` for binder and `hub.binder` for jupyterhub). When we finish this section, your binder will be available at `binder.<your-domain-name>.com`. Here's an example:
+- Now we need to create CNAMES in our domain's DNS configuration our Binder and backing JupyterHub that point to this LoadBalancer's IP. How this is done will depend on the provider but you just need to add a new CNAME record, give it a name (any name you want but I recommend, `binder` for binder and `hub.binder` for jupyterhub). When we finish this section, your binder will be available at `binder.<your-domain-name>.com`. Here's an example:
 ![cnames](img/cnames.png)
- - Now we just need to adjust our existing `nano config.yaml` (in the `binderhub` directory) to account for our new domains and loadbalancer. Also note the inclusinog of the `cors` headers which helped by-pass security issues I was having (this took me forever to figure out and I eventually found a solution in the `mybinder.org` [deployment source files here](https://github.com/jupyterhub/binderhub/blob/089702b32dc0689ba432504724d82bb42ad2a94f/helm-chart/binderhub/values.yaml)):
+ - Now we just need to adjust our existing `nano config.yaml` (in the `binderhub` directory) to account for our new domains and loadbalancer. Also note the inclusion of the `cors` headers which helps by-pass some browser security issues (this took me forever to figure out but now I added a section to the [Zero to Binderhub docs](https://binderhub.readthedocs.io/en/latest/cors.html) on this process):
 ```yaml
   config:
     BinderHub:
@@ -161,232 +163,30 @@ spec:
 - Secure!
 ![secure](img/binder_secure.png)
 
-## 5. Tearing It All Down <a name="5"></a>
+## 5. Customization <a name="5"></a>
+
+- There's a variety of settings you can configure to customize your BinderHub, for example, to ban or to allocate more resources to specific repositories. These are all documented in the [BinderHub docs](https://binderhub.readthedocs.io/en/latest/customization/index.html).
+- One setting I recommend configuring is adding a GitHub API token (by default GitHub only lets you make 60 requests each hour. If you expect more users than this, you should create an API access token to raise your API limit to 5000 requests an hour). This is explained in the [BinderHub docs here](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-binderhub.html#increase-your-github-api-limit), but briefly, you should create a [new token](https://github.com/settings/tokens/new) with default permissions, then add the following to `secret.yaml`:
+```yaml
+GitHubRepoProvider:
+  access_token: b9cc23fef2072c264d9fadd06adb757808766431
+```
+- I also found it useful to specify the culling behaviour of the hub (the deletion of inactive pods/users). By default the culling process runs every ten minutes and basically culls any user pods that have been inactive for more than one hour. While this is a defautl setting, I like to explicitly include it in `config.yaml` for clarity. Also, “inactivity” is defined as no response from the user’s browser, but sometimes a user will not be using their computer but will leave their browser open. I therefore like to also impose a max age on a pod to delete pods in this situation. To do this, add the following to `config.yaml`:
+
+```yaml
+jupyterhub:
+  cull:
+    enabled: true
+    # maxAge is 5 hours: 5 * 3600 = 18000
+    maxAge: 18000
+```
+
+## 6. Tearing It All Down <a name="6"></a>
 
 - Follow the instructions in the [AWS docs](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html).
 
 ```bash
 kubectl get svc --all-namespaces
-kubectl delete svc --namespace <name> <service-name>
+kubectl delete namespaces <namespace_to_delete>
 eksctl delete cluster --name <deployment_name>
-```
-
-## 6. Cheat Sheet <a name="6"></a>
-
-For those that know what they're doing, here's a cheat sheet of all the install commands, starting from [Step 2](#2) above:
-
-### Create Cluster
-
-```sh
-ssh-keygen
-nano aws_eks_config.yaml
-```
-
-```yml
-# file: aws_eks_config.yml
-# AWS EKS ClusterConfig used to setup the BinderHub / JupyterNotebooks K8s cluster
-# using a workaround from https://discourse.jupyter.org/t/binder-deployed-in-aws-eks-domain-name-resolution-errors/766/10
-# to fix broken DNS resolution
---- 
-apiVersion: eksctl.io/v1alpha5
-kind: ClusterConfig
-
-metadata:
-  name: binderhub
-  region: ca-central-1
-  version: '1.17'
-
-nodeGroups:
-  - name: binderhub-nodes
-    instanceType: t3.medium
-    minSize: 1
-    maxSize: 4
-    desiredCapacity: 2
-    preBootstrapCommands:
-        # Replicate what --enable-docker-bridge does in /etc/eks/bootstrap.sh
-        # Enabling the docker bridge network. We have to disable live-restore as it
-        # prevents docker from recreating the default bridge network on restart
-       - "cp /etc/docker/daemon.json /etc/docker/daemon_backup.json"
-       - "echo -e '.bridge=\"docker0\" | .\"live-restore\"=false' >  /etc/docker/jq_script"
-       - "jq -f /etc/docker/jq_script /etc/docker/daemon_backup.json | tee /etc/docker/daemon.json"
-       - "systemctl restart docker"
-```
-
-```sh
-eksctl create cluster --config-file aws_eks_config.yaml
-kubectl get svc
-```
-
-### Install Helm
-
-```sh
-curl https://raw.githubusercontent.com/kubernetes/helm/master/scripts/get | bash
-kubectl --namespace kube-system create serviceaccount tiller
-kubectl create clusterrolebinding tiller --clusterrole cluster-admin --serviceaccount=kube-system:tiller
-helm init --service-account tiller --history-max 100 --wait
-kubectl patch deployment tiller-deploy --namespace=kube-system --type=json --patch='[{"op": "add", "path": "/spec/template/spec/containers/0/command", "value": ["/tiller", "--listen=localhost:44134"]}]'
-helm version
-```
-
-### Install BinderHub
-
-```sh
-mkdir binderhub
-cd binderhub
-openssl rand -hex 32 # these will be entered into secret.yaml
-openssl rand -hex 32
-nano secret.yaml # enter the following
-```
-
-```yml
-jupyterhub:
-  hub:
-    services:
-      binder:
-        apiToken: "<first hex>"
-  proxy:
-    secretToken: "<second hex>"
-registry:
-  username: <docker_username>
-  password: <docker_password>
-```
-
-```sh
-nano config.yaml # enter the following
-```
-
-```yml
-config:
-  BinderHub:
-    use_registry: true
-    image_prefix: tbeuzen/mds-binderhub-dev-
-```
-
-```sh
-helm repo add jupyterhub https://jupyterhub.github.io/helm-chart
-helm repo update
-helm install jupyterhub/binderhub --version=0.2.0-n219.hbc17443  --name=binderhub --namespace=binderhub -f secret.yaml -f config.yaml
-kubectl --namespace=binderhub get svc proxy-public
-nano config.yaml # enter the following
-```
-
-```yml
-config:
-  BinderHub:
-    use_registry: true
-    image_prefix: tbeuzen/mds-binderhub-dev-
-    hub_url: http://<enter EXTERNAL-IP output from the previous command>
-```
-
-```sh
-helm upgrade binderhub jupyterhub/binderhub --version=0.2.0-n219.hbc17443 -f secret.yaml -f config.yaml
-kubectl -n binderhub get svc binder
-```
-
-### Secure BinderHub
-
-```sh
-kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v0.11.0/cert-manager.yaml
-nano binderhub-issuer.yaml
-```
-
-```yml
-apiVersion: cert-manager.io/v1alpha2
-kind: Issuer
-metadata:
-  name: letsencrypt-production
-  namespace: binderhub # you can view namespace with: kubectl get svc --all-namespaces
-spec:
-  acme:
-    # You must replace this email address with your own.
-    # Let's Encrypt will use this to contact you about expiring
-    # certificates, and issues related to your account.
-    email: <your-email-address>
-    server: https://acme-v02.api.letsencrypt.org/directory
-    privateKeySecretRef:
-      # Secret resource used to store the account's private key.
-      name: letsencrypt-production
-    solvers:
-    - http01:
-        ingress:
-          class: nginx
-```
-
-```sh
-kubectl apply -f binderhub-issuer.yaml
-kubectl -n ingress-nginx get svc ingress-nginx-controller
-# create cnames in the domain DNS configuration now
-nano config.yaml
-```
-
-```yaml
-config:
-  BinderHub:
-    use_registry: true
-    image_prefix: tbeuzen/mds-binderhub-dev-
-    hub_url: https://hub.binder.rudaux.com # e.g. https://hub.binder.example.com
-
-cors: &cors
-  allowOrigin: '*'
-
-jupyterhub:
-  custom:
-    cors: *cors
-  ingress:
-    enabled: true
-    hosts:
-      - hub.binder.rudaux.com # e.g. hub.binder.example.com
-    annotations:
-      kubernetes.io/ingress.class: nginx
-      kubernetes.io/tls-acme: "true"
-      cert-manager.io/issuer: letsencrypt-production
-      https:
-        enabled: true
-        type: nginx
-    tls:
-      - secretName: hub-binder-rudaux-com-tls # e.g. hub-binder-example-com-tls
-        hosts:
-          - hub.binder.rudaux.com # e.g. hub.binder.example.com
-
-ingress:
-  enabled: true
-  hosts:
-    - binder.rudaux.com # e.g. binder.example.com
-  annotations:
-    kubernetes.io/ingress.class: nginx
-    kubernetes.io/tls-acme: "true"
-    cert-manager.io/issuer: letsencrypt-production
-    https:
-      enabled: true
-      type: nginx
-  tls:
-    - secretName: binder-rudaux-com-tls  # e.g. binder-example-com-tls
-      hosts:
-        - binder.rudaux.com # e.g. binder.example.com
-```
-
-```sh
-helm upgrade binderhub jupyterhub/binderhub --version=0.2.0-n219.hbc17443 -f secret.yaml -f config.yaml
-```
-
-```yml
-apiVersion: cert-manager.io/v1alpha2
-kind: Issuer
-metadata:
-  name: letsencrypt-production
-  namespace: binderhub # you can view namespace with: kubectl get svc --all-namespaces
-spec:
-  acme:
-    # You must replace this email address with your own.
-    # Let's Encrypt will use this to contact you about expiring
-    # certificates, and issues related to your account.
-    email: tomas.beuzen@gmail.com
-    server: https://acme-v02.api.letsencrypt.org/directory
-    privateKeySecretRef:
-      # Secret resource used to store the account's private key.
-      name: letsencrypt-production
-    solvers:
-    - http01:
-        ingress:
-          class: nginx
 ```

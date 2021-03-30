@@ -169,7 +169,7 @@ spec:
 - One setting I recommend configuring is adding a GitHub API token (by default GitHub only lets you make 60 requests each hour. If you expect more users than this, you should create an API access token to raise your API limit to 5000 requests an hour). This is explained in the [BinderHub docs here](https://binderhub.readthedocs.io/en/latest/zero-to-binderhub/setup-binderhub.html#increase-your-github-api-limit), but briefly, you should create a [new token](https://github.com/settings/tokens/new) with default permissions, then add the following to `secret.yaml`:
 ```yaml
 GitHubRepoProvider:
-  access_token: b9cc23fef2072c264d9fadd06adb757808766431
+  access_token: <your_token>
 ```
 - I also found it useful to specify the culling behaviour of the hub (the deletion of inactive pods/users). By default the culling process runs every ten minutes and basically culls any user pods that have been inactive for more than one hour. While this is a defautl setting, I like to explicitly include it in `config.yaml` for clarity. Also, “inactivity” is defined as no response from the user’s browser, but sometimes a user will not be using their computer but will leave their browser open. I therefore like to also impose a max age on a pod to delete pods in this situation. To do this, add the following to `config.yaml`:
 

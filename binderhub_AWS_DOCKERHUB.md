@@ -12,7 +12,7 @@ To create a BinderHub, follow the steps below.
 2. [Create a Cluster with EKS](#2)
 3. [Set up BinderHub](#3)
 4. [Secure BinderHub](#4)
-5. [](#5)
+5. [Customization](#5)
 6. [Tearing It All Down](#6)
 
 ## 1. Create an EC2 Instance <a name="1"></a>

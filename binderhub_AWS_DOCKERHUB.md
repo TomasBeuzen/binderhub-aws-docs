@@ -13,7 +13,8 @@ To create a BinderHub, follow the steps below.
 3. [Set up BinderHub](#3)
 4. [Secure BinderHub](#4)
 5. [Customization](#5)
-6. [Tearing It All Down](#6)
+6. [Scaling Up or Down](#6)
+7. [Tearing It All Down](#7)
 
 ## 1. Create an EC2 Instance <a name="1"></a>
 
@@ -119,6 +120,8 @@ spec:
 ```yaml
   config:
     BinderHub:
+      use_registry: true
+      image_prefix: <docker-id OR organization-name>/<prefix>-
       hub_url: https://<jupyterhub-URL> # e.g. https://hub.binder.example.com
   
   cors: &cors
@@ -171,7 +174,7 @@ spec:
 GitHubRepoProvider:
   access_token: <your_token>
 ```
-- I also found it useful to specify the culling behaviour of the hub (the deletion of inactive pods/users). By default the culling process runs every ten minutes and basically culls any user pods that have been inactive for more than one hour. While this is a defautl setting, I like to explicitly include it in `config.yaml` for clarity. Also, “inactivity” is defined as no response from the user’s browser, but sometimes a user will not be using their computer but will leave their browser open. I therefore like to also impose a max age on a pod to delete pods in this situation. To do this, add the following to `config.yaml`:
+- I also found it useful to specify the culling behaviour of the hub (the deletion of inactive pods/users). By default the culling process runs every ten minutes and basically culls any user pods that have been inactive for more than one hour. While this is a defautl setting, I like to explicitly include it in `config.yaml` for clarity. Also, “inactivity” is defined as no response from the user’s browser, but sometimes a user will not be using their computer but will leave their browser open. I therefore like to also impose a max age on a pod to delete pods in this situation. To do this, add the following to the `jupyterhub` header in `config.yaml` (read more about this in the [JH docs here](https://zero-to-jupyterhub.readthedocs.io/en/stable/jupyterhub/customizing/user-management.html)):
 
 ```yaml
 jupyterhub:
@@ -181,7 +184,19 @@ jupyterhub:
     maxAge: 18000
 ```
 
-## 6. Tearing It All Down <a name="6"></a>
+## 6. Scaling Up or Down <a name="6"></a>
+
+- Scaling the cluster up or down is described in the [eksctl docs here](https://eksctl.io/usage/managing-nodegroups/#scaling)
+- The syntax is:
+```bash
+eksctl scale nodegroup --cluster=<clusterName> --nodes=<desiredCount> --name=<nodegroupName> [ --nodes-min=<minSize> ] [ --nodes-max=<maxSize> ]
+```
+- For example, to scale the cluster created in this walkthrough to 3 nodes, we might run:
+```bash
+eksctl scale nodegroup --cluster=binderhub --nodes=3 --name=nodes
+```
+
+## 7. Tearing It All Down <a name="7"></a>
 
 - Follow the instructions in the [AWS docs](https://docs.aws.amazon.com/eks/latest/userguide/delete-cluster.html).
 
